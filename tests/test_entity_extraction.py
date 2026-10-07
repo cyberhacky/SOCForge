@@ -113,3 +113,17 @@ def test_extraction_treats_command_text_as_untrusted_data() -> None:
     entities = extract_entities(event)
 
     assert entities is not None
+
+def test_executable_names_are_not_domains() -> None:
+    event = make_event(
+        message=(
+            "Process services.exe launched winlogon.exe "
+            "and connected to example.com"
+        )
+    )
+
+    entities = extract_entities(event)
+
+    assert "services.exe" not in entities.domains
+    assert "winlogon.exe" not in entities.domains
+    assert "example.com" in entities.domains

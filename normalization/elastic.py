@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any
 
+from normalization.entities import extract_entities
 from normalization.schemas import EventSeverity, EventSource, SOCEvent
 
 
@@ -87,7 +88,7 @@ def normalize_elastic_event(
     if parsed_timestamp.tzinfo is None:
         parsed_timestamp = parsed_timestamp.replace(tzinfo=timezone.utc)
 
-    return SOCEvent(
+    normalized = SOCEvent(
         event_id=str(event_id),
         timestamp=parsed_timestamp,
         source=EventSource.ELASTIC,
@@ -120,3 +121,7 @@ def normalize_elastic_event(
         source_document_id=elastic_hit.get("id"),
         raw_event=elastic_hit,
     )
+
+    normalized.entities = extract_entities(normalized)
+
+    return normalized

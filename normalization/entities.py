@@ -9,6 +9,25 @@ from normalization.schemas import EventEntities, SOCEvent
 MAX_TEXT_LENGTH = 100_000
 MAX_ENTITIES_PER_TYPE = 100
 
+NON_DOMAIN_SUFFIXES = {
+    "bat",
+    "cmd",
+    "dll",
+    "exe",
+    "msi",
+    "ps1",
+    "psm1",
+    "psd1",
+    "scr",
+    "sys",
+    "vbs",
+    "vbe",
+    "js",
+    "jse",
+    "wsf",
+    "wsh",
+}
+
 
 IP_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])"
@@ -95,6 +114,9 @@ def _valid_domain(value: str) -> bool:
         return False
 
     labels = value.split(".")
+
+    if labels[-1] in NON_DOMAIN_SUFFIXES:
+        return False
 
     return all(
         label
