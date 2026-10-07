@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     elastic_username: str | None = None
     elastic_password: str | None = None
 
+    postgres_db: str = "socforge"
+    postgres_user: str = "socforge"
+    postgres_password: str = ""
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
