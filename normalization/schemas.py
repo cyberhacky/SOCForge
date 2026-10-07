@@ -1,7 +1,8 @@
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EventSeverity(StrEnum):
@@ -17,12 +18,32 @@ class EventSource(StrEnum):
     API = "api"
 
 
+class EventEntities(BaseModel):
+    """
+    Deterministically extracted entities from a normalized security event.
+
+    These values are evidence candidates only. Extraction does not imply
+    that an entity is malicious or suspicious.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ips: list[str] = Field(default_factory=list)
+    domains: list[str] = Field(default_factory=list)
+    urls: list[str] = Field(default_factory=list)
+    hashes: list[str] = Field(default_factory=list)
+    usernames: list[str] = Field(default_factory=list)
+    hostnames: list[str] = Field(default_factory=list)
+    processes: list[str] = Field(default_factory=list)
+    command_lines: list[str] = Field(default_factory=list)
+
+
 class SOCEvent(BaseModel):
     """
     Normalized security event used internally by SOCForge.
 
-    Raw vendor-specific events should be converted into this model
-    before investigation or enrichment.
+    The model contains common investigation fields while preserving
+    the complete original event in raw_event.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -38,10 +59,18 @@ class SOCEvent(BaseModel):
 
     host: str | None = None
     username: str | None = None
+
     source_ip: str | None = None
     destination_ip: str | None = None
 
     process_name: str | None = None
     process_command_line: str | None = None
 
-    raw_event: dict = Field(default_factory=dict)
+    ingestion_timestamp: datetime
+
+    source_index: str | None = None
+    source_document_id: str | None = None
+
+    entities: EventEntities = Field(default_factory=EventEntities)
+
+    raw_event: dict[str, Any] = Field(default_factory=dict)

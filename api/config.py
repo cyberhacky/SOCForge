@@ -6,9 +6,10 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     debug: bool = False
 
-    elastic_url: str = "http://localhost:9200"
+    elastic_url: str = "https://localhost:9200"
     elastic_username: str | None = None
     elastic_password: str | None = None
+    elastic_ca_cert: str | None = None
 
     postgres_db: str = "socforge"
     postgres_user: str = "socforge"
