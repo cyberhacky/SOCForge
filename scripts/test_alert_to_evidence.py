@@ -1,5 +1,3 @@
-from datetime import datetime, timedelta, timezone
-
 from collectors.elastic import ElasticConnector
 from investigation.correlation import (
     build_correlation_query,
@@ -12,7 +10,7 @@ from normalization.entities import extract_entities
 def main() -> None:
     connector = ElasticConnector()
 
-    print("=== SOCForge Alert → Evidence Test ===")
+    print("=== SOCForge Alert -> Evidence Test ===")
     print(f"Elastic ping: {connector.ping()}")
 
     # Retrieve one real Windows Security event.
@@ -64,14 +62,14 @@ def main() -> None:
     print(f"Hostnames:    {entities.hostnames}")
     print(f"Processes:    {entities.processes}")
 
-    # Correlate around the event using the real Elastic connector.
-
+    # Build the deterministic correlation query.
     correlation_query = build_correlation_query(event)
 
     print()
     print("=== Correlation Query ===")
     print(correlation_query)
 
+    # Correlate the event against real Elastic data.
     correlation = correlate_event(
         event,
         connector=connector,
@@ -99,25 +97,102 @@ def main() -> None:
         )
 
     print()
+    print("=== Ranked Evidence ===")
+
+    for item in correlation.evidence[:10]:
+        relevance = item.relevance
+
+        print(
+            f"- score={relevance.score:3d} | "
+            f"category={relevance.category:6s} | "
+            f"event={item.event.event_id} | "
+            f"time={item.event.timestamp.isoformat()}"
+        )
+
+        print(
+            f"  host={item.event.host} | "
+            f"user={item.event.username} | "
+            f"process={item.event.process_name}"
+        )
+
+        print(
+            f"  matched={relevance.matched_entities}"
+        )
+
+        for reason in relevance.reasons:
+            print(f"  reason={reason}")
+
+    print()
     print("=== Evidence Validation ===")
 
+    # The original alert must be preserved.
     assert correlation.alert.event_id == event.event_id
+
+    # Correlation must return related evidence.
     assert correlation.related_events
+    assert correlation.evidence
+
+    # Returned count must match the preserved related events.
     assert correlation.returned_count == len(
         correlation.related_events
+    )
+
+    # Every related event must have relevance metadata.
+    assert len(correlation.evidence) == len(
+        correlation.related_events
+    )
+
+    # Every correlated event must remain represented
+    # in the ranked evidence.
+    related_ids = {
+        related.event_id
+        for related in correlation.related_events
+    }
+
+    evidence_ids = {
+        item.event.event_id
+        for item in correlation.evidence
+    }
+
+    assert evidence_ids == related_ids
+
+    # Evidence must have valid deterministic relevance metadata.
+    for item in correlation.evidence:
+        assert 0 <= item.relevance.score <= 100
+
+        assert item.relevance.category in {
+            "high",
+            "medium",
+            "low",
+        }
+
+        assert item.relevance.reasons
+
+    # Ranked evidence must be ordered highest -> lowest score.
+    scores = [
+        item.relevance.score
+        for item in correlation.evidence
+    ]
+
+    assert scores == sorted(
+        scores,
+        reverse=True,
     )
 
     # The raw Elastic document must remain available.
     assert correlation.alert.raw_event
 
-    print("Alert/event preserved: PASS")
-    print("Normalization:         PASS")
-    print("Entity extraction:     PASS")
-    print("Elastic correlation:   PASS")
-    print("Raw evidence retained: PASS")
+    print("Alert/event preserved:       PASS")
+    print("Normalization:               PASS")
+    print("Entity extraction:           PASS")
+    print("Elastic correlation:         PASS")
+    print("Relevance evaluation:        PASS")
+    print("Evidence ranking:            PASS")
+    print("Evidence preservation:       PASS")
+    print("Raw evidence retained:       PASS")
 
     print()
-    print("=== Alert → Evidence COMPLETE ===")
+    print("=== Alert -> Evidence COMPLETE ===")
 
 
 if __name__ == "__main__":

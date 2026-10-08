@@ -4,6 +4,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from collectors.elastic import ElasticConnector
+from investigation.relevance import (
+    EvidenceRelevance,
+    evaluate_relevance,
+)
 from normalization.elastic import normalize_elastic_event
 from normalization.schemas import SOCEvent
 
@@ -12,9 +16,28 @@ DEFAULT_WINDOW_MINUTES = 30
 DEFAULT_MAX_EVENTS = 1000
 
 
+class CorrelatedEvidence(BaseModel):
+    """
+    A correlated event together with deterministic relevance metadata.
+
+    Relevance describes investigative usefulness. It does not determine
+    whether the event is malicious.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    event: SOCEvent
+    relevance: EvidenceRelevance
+
+
 class CorrelationResult(BaseModel):
     """
     Evidence returned by an Elastic correlation operation.
+
+    `related_events` contains the complete retrieved evidence set.
+
+    `evidence` contains the same events paired with deterministic
+    relevance metadata and ordered from most relevant to least relevant.
 
     `truncated` means the requested result limit was reached and the
     complete evidence set has not been established.
@@ -24,6 +47,10 @@ class CorrelationResult(BaseModel):
 
     alert: SOCEvent
     related_events: list[SOCEvent] = Field(default_factory=list)
+
+    evidence: list[CorrelatedEvidence] = Field(
+        default_factory=list
+    )
 
     window_start: str
     window_end: str
@@ -207,6 +234,38 @@ def _matched_entities(
     }
 
 
+def _build_evidence(
+    alert: SOCEvent,
+    related_events: list[SOCEvent],
+) -> list[CorrelatedEvidence]:
+    """
+    Attach deterministic relevance metadata to every correlated event.
+
+    No event is discarded at this stage.
+    """
+
+    evidence = [
+        CorrelatedEvidence(
+            event=related_event,
+            relevance=evaluate_relevance(
+                alert,
+                related_event,
+            ),
+        )
+        for related_event in related_events
+    ]
+
+    evidence.sort(
+        key=lambda item: (
+            -item.relevance.score,
+            item.event.timestamp,
+            item.event.event_id,
+        )
+    )
+
+    return evidence
+
+
 def correlate_event(
     event: SOCEvent,
     *,
@@ -220,7 +279,10 @@ def correlate_event(
     Correlation uses the event timestamp +/- the configured window and
     deterministic ECS entity matching.
 
-    Results are returned chronologically.
+    `related_events` preserves the complete retrieved evidence set.
+
+    `evidence` contains the same events with deterministic relevance
+    metadata and is ordered from most relevant to least relevant.
 
     A result is marked `truncated=True` when Elasticsearch reaches the
     configured safety limit.
@@ -273,9 +335,15 @@ def correlate_event(
         key=lambda item: item.timestamp
     )
 
+    evidence = _build_evidence(
+        event,
+        related_events,
+    )
+
     return CorrelationResult(
         alert=event,
         related_events=related_events,
+        evidence=evidence,
         window_start=start_time.isoformat(),
         window_end=end_time.isoformat(),
         matched_entities=_matched_entities(event),

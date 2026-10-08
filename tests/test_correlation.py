@@ -3,6 +3,8 @@ from unittest.mock import Mock
 
 from collectors.elastic import ElasticSearchResult
 from investigation.correlation import (
+    CorrelatedEvidence,
+    CorrelationResult,
     build_correlation_query,
     correlate_event,
 )
@@ -266,3 +268,143 @@ def test_max_events_is_bounded():
         assert "max_events" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
+
+def test_correlation_attaches_relevance_to_all_events():
+    event = make_event()
+
+    connector = Mock()
+
+    connector.search_all.return_value = ElasticSearchResult(
+        events=[
+            {
+                "index": "logs-test",
+                "id": "event-2",
+                "score": 1.0,
+                "source": {
+                    "@timestamp": "2026-10-07T17:10:00Z",
+                    "event": {
+                        "action": "network-connection",
+                    },
+                    "host": {
+                        "name": "WIN-DC-01",
+                    },
+                },
+            },
+            {
+                "index": "logs-test",
+                "id": "event-1",
+                "score": 1.0,
+                "source": {
+                    "@timestamp": "2026-10-07T16:45:00Z",
+                    "event": {
+                        "action": "logon",
+                    },
+                    "host": {
+                        "name": "WIN-DC-01",
+                    },
+                },
+            },
+        ],
+        truncated=False,
+    )
+
+    result = correlate_event(
+        event,
+        connector=connector,
+        window_minutes=30,
+        max_events=100,
+    )
+
+    assert isinstance(result, CorrelationResult)
+
+    assert len(result.related_events) == 2
+    assert len(result.evidence) == 2
+
+    assert all(
+        isinstance(item, CorrelatedEvidence)
+        for item in result.evidence
+    )
+
+    assert {
+        item.event.event_id
+        for item in result.evidence
+    } == {
+        item.event_id
+        for item in result.related_events
+    }
+
+
+def test_correlation_evidence_is_ranked_by_relevance():
+    event = make_event()
+
+    connector = Mock()
+
+    connector.search_all.return_value = ElasticSearchResult(
+        events=[
+            {
+                "index": "logs-test",
+                "id": "event-low",
+                "score": 1.0,
+                "source": {
+                    "@timestamp": "2026-10-07T17:25:00Z",
+                    "event": {
+                        "action": "network-connection",
+                    },
+                    "host": {
+                        "name": "OTHER-HOST",
+                    },
+                    "user": {
+                        "name": "other-user",
+                    },
+                    "source": {
+                        "ip": "192.168.1.50",
+                    },
+                    "process": {
+                        "name": "notepad.exe",
+                    },
+                },
+            },
+            {
+                "index": "logs-test",
+                "id": "event-high",
+                "score": 1.0,
+                "source": {
+                    "@timestamp": "2026-10-07T17:01:00Z",
+                    "event": {
+                        "action": "process-start",
+                    },
+                    "host": {
+                        "name": "WIN-DC-01",
+                    },
+                    "user": {
+                        "name": "jsmith",
+                    },
+                    "source": {
+                        "ip": "10.10.10.25",
+                    },
+                    "process": {
+                        "name": "powershell.exe",
+                    },
+                },
+            },
+        ],
+        truncated=False,
+    )
+
+    result = correlate_event(
+        event,
+        connector=connector,
+        window_minutes=30,
+        max_events=100,
+    )
+
+    assert len(result.related_events) == 2
+    assert len(result.evidence) == 2
+
+    assert result.evidence[0].event.event_id == "event-high"
+    assert result.evidence[1].event.event_id == "event-low"
+
+    assert (
+        result.evidence[0].relevance.score
+        > result.evidence[1].relevance.score
+    )
