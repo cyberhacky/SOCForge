@@ -5,3 +5,4 @@ pydantic-settings==2.15.0
 python-dotenv==1.2.4
 psycopg[binary]==3.3.6
 pytest==9.1.1
+httpx==0.28.1

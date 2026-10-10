@@ -37,6 +37,10 @@ class ElasticConnector:
             ca_certs=settings.elastic_ca_cert,
         )
 
+    def close(self) -> None:
+        """Release the Elasticsearch client's transport resources."""
+        self.client.close()
+
     def ping(self) -> bool:
         return bool(self.client.ping())
 
