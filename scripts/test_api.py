@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from api import main
 from investigation.workflow import InvestigationResult
@@ -12,6 +13,19 @@ from scripts.test_enrichment_service import (
 
 
 TEST_TIME = datetime(2026, 10, 9, 0, 0, tzinfo=timezone.utc)
+TEST_API_KEY = "socforge-test-key"
+
+
+def _auth_headers(token: str = TEST_API_KEY) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _configure_api_key(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main.settings,
+        "socforge_api_key",
+        SecretStr(TEST_API_KEY),
+    )
 
 
 class FakeConnector:
@@ -54,6 +68,7 @@ def test_health_endpoint_remains_available():
 def test_investigation_without_api_key_does_not_construct_provider(
     monkeypatch,
 ):
+    _configure_api_key(monkeypatch)
     monkeypatch.setattr(main.settings, "abuseipdb_api_key", None)
 
     connector = FakeConnector()
@@ -86,6 +101,7 @@ def test_investigation_without_api_key_does_not_construct_provider(
     response = client.post(
         "/investigations",
         json=_event_payload(),
+        headers=_auth_headers(),
     )
 
     assert response.status_code == 200
@@ -96,6 +112,7 @@ def test_investigation_without_api_key_does_not_construct_provider(
 def test_investigation_constructs_provider_when_key_is_configured(
     monkeypatch,
 ):
+    _configure_api_key(monkeypatch)
     monkeypatch.setattr(
         main.settings,
         "abuseipdb_api_key",
@@ -145,6 +162,7 @@ def test_investigation_constructs_provider_when_key_is_configured(
     response = client.post(
         "/investigations",
         json=_event_payload(),
+        headers=_auth_headers(),
     )
 
     assert response.status_code == 200
@@ -155,11 +173,13 @@ def test_investigation_constructs_provider_when_key_is_configured(
 
 
 def test_invalid_event_body_is_rejected(monkeypatch):
-    client = TestClient(main.app)
+    _configure_api_key(monkeypatch)
 
+    client = TestClient(main.app)
     response = client.post(
         "/investigations",
         json={"event_id": "", "source": "manual"},
+        headers=_auth_headers(),
     )
 
     assert response.status_code == 422
@@ -168,6 +188,8 @@ def test_invalid_event_body_is_rejected(monkeypatch):
 def test_workflow_failure_does_not_expose_exception_details(
     monkeypatch,
 ):
+    _configure_api_key(monkeypatch)
+
     connector = FakeConnector()
     monkeypatch.setattr(
         main,
@@ -184,7 +206,6 @@ def test_workflow_failure_does_not_expose_exception_details(
         failing_workflow,
     )
 
-    # Prevent TestClient from re-raising the application's HTTP 500.
     client = TestClient(
         main.app,
         raise_server_exceptions=False,
@@ -192,8 +213,81 @@ def test_workflow_failure_does_not_expose_exception_details(
     response = client.post(
         "/investigations",
         json=_event_payload(),
+        headers=_auth_headers(),
     )
 
     assert response.status_code == 500
     assert "sensitive-internal-detail" not in response.text
     assert connector.closed is True
+
+
+def test_investigation_without_credentials_returns_401(
+    monkeypatch,
+):
+    _configure_api_key(monkeypatch)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/investigations",
+        json=_event_payload(),
+    )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_investigation_with_invalid_credentials_returns_401(
+    monkeypatch,
+):
+    _configure_api_key(monkeypatch)
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/investigations",
+        json=_event_payload(),
+        headers=_auth_headers("wrong-test-key"),
+    )
+
+    assert response.status_code == 401
+    assert "wrong-test-key" not in response.text
+
+
+def test_investigation_without_server_key_fails_closed(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        main.settings,
+        "socforge_api_key",
+        None,
+    )
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/investigations",
+        json=_event_payload(),
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "API authentication is not configured."
+    )
+
+
+def test_investigation_with_empty_server_key_fails_closed(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        main.settings,
+        "socforge_api_key",
+        SecretStr("   "),
+    )
+
+    client = TestClient(main.app)
+    response = client.post(
+        "/investigations",
+        json=_event_payload(),
+        headers=_auth_headers("   "),
+    )
+
+    assert response.status_code == 503

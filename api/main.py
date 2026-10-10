@@ -1,7 +1,8 @@
 import asyncio
 import logging
+import secrets
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 
 from api.config import settings
 from api.responses import (
@@ -15,6 +16,43 @@ from normalization.schemas import SOCEvent
 
 
 logger = logging.getLogger(__name__)
+
+
+def require_api_key(
+    authorization: str | None = Header(default=None),
+) -> None:
+    """Require a valid bearer token before accessing protected routes."""
+
+    configured_key = settings.socforge_api_key
+
+    if configured_key is None:
+        raise HTTPException(
+            status_code=503,
+            detail="API authentication is not configured.",
+        )
+
+    expected_key = configured_key.get_secret_value()
+
+    if not expected_key.strip():
+        raise HTTPException(
+            status_code=503,
+            detail="API authentication is not configured.",
+        )
+
+    scheme, separator, token = (authorization or "").partition(" ")
+
+    if (
+        not separator
+        or scheme.lower() != "bearer"
+        or not token
+        or not secrets.compare_digest(token, expected_key)
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API credentials.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -38,6 +76,7 @@ def health_check() -> dict[str, str]:
 )
 async def create_investigation(
     event: SOCEvent,
+    _: None = Depends(require_api_key),
 ) -> PublicInvestigationResult:
     """Investigate a normalized event and return sanitized evidence."""
 
